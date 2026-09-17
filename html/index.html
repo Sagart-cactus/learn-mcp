@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>The MCP Knowledgebase - Model Context Protocol Explained</title>
-<meta name="description" content="Practical Model Context Protocol knowledgebase: architecture, primitives, call flow, server design, security, and best practices for building MCP servers.">
+<meta name="description" content="Practical Model Context Protocol knowledgebase for the 2026-07-28 spec: the stateless core, Multi Round-Trip Requests, extensions, architecture, call flow, server design, security, and a migration checklist.">
 <link rel="canonical" href="https://sagartrivedi.dev/learn-mcp/">
 <meta property="og:url" content="https://sagartrivedi.dev/learn-mcp/">
 <style>
@@ -98,6 +98,10 @@
     transition: all 0.2s;
   }
   .nav-links a:hover { color: var(--text); background: var(--bg-card); }
+  @media (max-width: 1150px) {
+    .nav-links { font-size: 12px; gap: 2px; }
+    .nav-links a { padding: 6px 8px; }
+  }
   @media (max-width: 900px) { .nav-links { display: none; } }
 
   /* ===== Layout ===== */
@@ -436,6 +440,21 @@
   .pill.good { color: var(--success); border-color: rgba(74, 222, 128, 0.3); background: rgba(74, 222, 128, 0.08); }
   .pill.bad { color: var(--danger); border-color: rgba(248, 113, 113, 0.3); background: rgba(248, 113, 113, 0.08); }
 
+  /* ===== Inline code ===== */
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: rgba(94, 234, 212, 0.08);
+    border: 1px solid rgba(94, 234, 212, 0.16);
+    color: var(--primary);
+    padding: 1px 5px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  .callout.warn code { background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.2); color: var(--warn); }
+  h2 code, h4 code { font-size: 0.92em; }
+  .hero .eyebrow code { background: none; border: none; padding: 0; color: inherit; }
+
   /* ===== Code block ===== */
   pre.code {
     background: #060912;
@@ -558,14 +577,17 @@
     <span>MCP Knowledgebase</span>
   </div>
   <div class="nav-links">
+    <a href="#whats-new">What's New</a>
     <a href="#what">What</a>
     <a href="#blocks">Blocks</a>
     <a href="#how">How</a>
     <a href="#vs-api">vs API</a>
     <a href="#agents">Agents</a>
     <a href="#security">Security</a>
-    <a href="#sessions">Sessions</a>
+    <a href="#sessions">State</a>
     <a href="#best">Best Practices</a>
+    <a href="#extensions">Extensions</a>
+    <a href="#migrate">Migrate</a>
   </div>
 </nav>
 
@@ -573,15 +595,80 @@
 
   <!-- ============== HERO ============== -->
   <section class="hero">
-    <div class="eyebrow"><span class="pulse"></span>Last updated: May 2026</div>
+    <div class="eyebrow"><span class="pulse"></span>Last updated: September 2026 · Spec <code>2026-07-28</code></div>
     <h1>The Model Context Protocol,<br/><span class="grad">explained the way agents actually use it.</span></h1>
-    <p class="lead">A practical, practitioner-grade reference: what MCP is, how it works, how to build one well, and how to keep it secure - with animated diagrams of every flow.</p>
+    <p class="lead">A practical, practitioner-grade reference for the <strong>2026-07-28</strong> specification: what MCP is, how the new stateless core works, how to build a server well, and how to keep it secure - with animated diagrams of every flow.</p>
 
     <div class="stats">
-      <div class="stat"><div class="num">97M+</div><div class="label">SDK downloads</div></div>
-      <div class="stat"><div class="num">10K+</div><div class="label">Active public servers</div></div>
-      <div class="stat"><div class="num">2</div><div class="label">Standard transports</div></div>
+      <div class="stat"><div class="num">~500M</div><div class="label">SDK downloads / month</div></div>
+      <div class="stat"><div class="num">1B+</div><div class="label">Total TS &amp; Python downloads</div></div>
+      <div class="stat"><div class="num">0</div><div class="label">Protocol-level sessions</div></div>
       <div class="stat"><div class="num">M+N</div><div class="label">Replaces M x N integration</div></div>
+    </div>
+  </section>
+
+  <!-- ============== 0. WHAT'S NEW ============== -->
+  <section class="module" id="whats-new">
+    <div class="section-num">// 00 - What changed</div>
+    <h2>What's new in <code>2026-07-28</code></h2>
+    <p class="subtitle">The largest breaking change since MCP launched. <strong>MCP is now a stateless request/response protocol.</strong> If you last read about MCP before August 2026, read this section first - several things you learned are no longer true.</p>
+
+    <div class="callout warn">
+      <strong>The one-line version -&gt;</strong> The <code>initialize</code> handshake, the <code>Mcp-Session-Id</code> header, server-initiated requests, and SSE stream resumability are all gone. Any request can now land on any instance behind a plain round-robin load balancer.
+    </div>
+
+    <div class="card-grid cols-3">
+      <div class="card tools">
+        <div class="card-icon">∅</div>
+        <h4>No sessions, no handshake</h4>
+        <p>Protocol-level sessions and <code>initialize</code>/<code>notifications/initialized</code> are removed. Every request carries its protocol version, client identity and capabilities in <code>_meta</code>.</p>
+        <span class="tag">SEP-2567 · SEP-2575</span>
+      </div>
+      <div class="card resources">
+        <div class="card-icon">?</div>
+        <h4><code>server/discover</code></h4>
+        <p>One mandatory RPC advertising supported versions, capabilities and identity. Clients <em>may</em> call it up front, or just fire a request and handle <code>UnsupportedProtocolVersion</code>.</p>
+        <span class="tag">SEP-2575</span>
+      </div>
+      <div class="card prompts">
+        <div class="card-icon">⇄</div>
+        <h4>Multi Round-Trip Requests</h4>
+        <p>Servers no longer call clients. They return <code>resultType: "input_required"</code>; the client answers and retries the original request. Elicitation now survives a stateless core.</p>
+        <span class="tag">SEP-2322</span>
+      </div>
+      <div class="card sampling">
+        <div class="card-icon">⌁</div>
+        <h4>Header-based routing</h4>
+        <p><code>Mcp-Method</code> and <code>Mcp-Name</code> are required on Streamable HTTP POSTs, so gateways, rate limiters and WAFs can route and meter without parsing JSON.</p>
+        <span class="tag">SEP-2243</span>
+      </div>
+      <div class="card roots">
+        <div class="card-icon">⧗</div>
+        <h4>Cacheable list results</h4>
+        <p><code>ttlMs</code> and <code>cacheScope</code> are required on list and read results. Clients cache instead of re-listing every turn.</p>
+        <span class="tag">SEP-2549</span>
+      </div>
+      <div class="card elicitation">
+        <div class="card-icon">⌫</div>
+        <h4>Deprecations</h4>
+        <p><strong>Roots</strong>, <strong>Sampling</strong>, <strong>Logging</strong> and OAuth <strong>Dynamic Client Registration</strong> are deprecated - still functional, removable no sooner than 2027-07-28.</p>
+        <span class="tag">SEP-2577 · SEP-2596</span>
+      </div>
+    </div>
+
+    <h3>Also in this release</h3>
+    <ul class="feat">
+      <li><strong>Extensions framework</strong> (SEP-2133) - reverse-DNS identified, independently versioned, always opt-in. Tasks, MCP Apps, Skills over MCP and the auth extensions all live here.</li>
+      <li><strong>Tasks left the core</strong> (SEP-2663) - now <code>io.modelcontextprotocol/tasks</code>, with polling via <code>tasks/get</code> and a new <code>tasks/update</code> for mid-flight input.</li>
+      <li><strong><code>subscriptions/listen</code></strong> replaces the HTTP GET endpoint and <code>resources/subscribe</code>, with per-type client opt-in.</li>
+      <li><strong>Authorization hardening</strong> - RFC 9207 <code>iss</code> validation, issuer-bound client credentials, <code>application_type</code> in DCR, and Client ID Metadata Documents as the preferred registration path.</li>
+      <li><strong>Full JSON Schema 2020-12</strong> in <code>inputSchema</code> and <code>outputSchema</code>, including <code>oneOf</code>, <code>anyOf</code>, <code>allOf</code> and <code>$ref</code>.</li>
+      <li><strong>A formal deprecation policy</strong> - Active &rarr; Deprecated &rarr; Removed, with a twelve-month minimum window.</li>
+      <li><strong>No SSE resumability</strong> - <code>Last-Event-ID</code> and event IDs are gone. A broken stream means the client re-issues the request, so make side-effecting tools idempotent.</li>
+    </ul>
+
+    <div class="callout">
+      <strong>Not urgent -&gt;</strong> Deprecated is not removed. Roots, Sampling, Logging and DCR keep working, and the earliest any can disappear is the first revision released on or after <strong>2027-07-28</strong>. Don't add new dependencies on them; don't panic-rewrite working code this quarter. There's a full migration checklist in <a href="#migrate" style="color: var(--primary);">section 12</a>.
     </div>
   </section>
 
@@ -685,11 +772,33 @@
 
     <h3>A short history</h3>
     <ul class="feat">
-      <li><strong>Nov 2024</strong> - Anthropic publishes the spec and open-sources the SDKs.</li>
-      <li><strong>2025</strong> - OpenAI, Google DeepMind, Microsoft, AWS and most major IDEs adopt MCP.</li>
+      <li><strong>Nov 2024</strong> - Anthropic publishes the spec (<code>2024-11-05</code>) and open-sources the SDKs.</li>
+      <li><strong>2025</strong> - OpenAI, Google DeepMind, Microsoft, AWS and most major IDEs adopt MCP. Revisions <code>2025-03-26</code> (Streamable HTTP, OAuth) and <code>2025-06-18</code> (elicitation, structured output) land.</li>
+      <li><strong>Nov 2025</strong> - <code>2025-11-25</code> ships: experimental tasks, URL-mode elicitation, further authorization work.</li>
       <li><strong>Dec 2025</strong> - Anthropic donates MCP to the <strong>Agentic AI Foundation</strong> under the Linux Foundation, reinforcing vendor-neutral governance.</li>
-      <li><strong>2026</strong> - Anthropic reports 97M+ monthly SDK downloads and 10,000+ active public MCP servers across the ecosystem.</li>
+      <li><strong>Mar 2026</strong> - The 2026 roadmap names transport scalability, agent communication, governance and enterprise readiness as priorities. The extensions framework arrives.</li>
+      <li><strong>Jun 2026</strong> - <strong>Enterprise-Managed Authorization</strong> reaches stable, adopted by Anthropic, Microsoft and Okta.</li>
+      <li><strong>28 Jul 2026</strong> - <strong><code>2026-07-28</code></strong> ships the stateless core, MRTR, header routing, cacheable lists, auth hardening and extensions. All four Tier 1 SDKs (TypeScript, Python, Go, C#) speak it on day one; Rust follows in beta.</li>
+      <li><strong>Aug 2026</strong> - A new roadmap sets five priority areas for the next cycle.</li>
     </ul>
+
+    <p style="color: var(--text-dim); font-size: 15px; margin-top: 8px;">At the <code>2026-07-28</code> release the maintainers reported close to <strong>half a billion downloads a month</strong> across the Tier 1 SDKs, with the TypeScript and Python SDKs each crossing <strong>1 billion total downloads</strong>.</p>
+
+    <h3>Protocol revisions at a glance</h3>
+    <div class="compare">
+      <div class="compare-header">
+        <div>Revision</div>
+        <div class="api-col">Era</div>
+        <div class="mcp-col">Headline change</div>
+      </div>
+      <div class="compare-row"><div class="dim">2024-11-05</div><div>Legacy</div><div class="mcp">Initial spec; stdio and HTTP+SSE transports</div></div>
+      <div class="compare-row"><div class="dim">2025-03-26</div><div>Legacy</div><div class="mcp">Streamable HTTP; OAuth 2.1; HTTP+SSE deprecated</div></div>
+      <div class="compare-row"><div class="dim">2025-06-18</div><div>Legacy</div><div class="mcp">Elicitation; structured tool output; Resource Indicators</div></div>
+      <div class="compare-row"><div class="dim">2025-11-25</div><div>Legacy</div><div class="mcp">Experimental tasks; URL-mode elicitation</div></div>
+      <div class="compare-row"><div class="dim">2026-07-28</div><div>Modern</div><div class="mcp"><strong>Stateless core; no handshake, no session IDs; MRTR; extensions</strong></div></div>
+    </div>
+
+    <p style="color: var(--text-dim); font-size: 15px;">The spec calls <code>2025-11-25</code> and earlier <strong>legacy</strong> (they establish a session with an <code>initialize</code> handshake) and <code>2026-07-28</code> and later <strong>modern</strong> (version, identity and capabilities travel as per-request metadata). An implementation supporting both is <strong>dual-era</strong>.</p>
 
     <div class="callout">
       <strong>The mental model -></strong> A <em>Host</em> (Claude Desktop, an IDE, your agent) runs one <em>Client</em> per <em>Server</em>. The server is the program that exposes capabilities from some external system. One host, many clients, many servers - all speaking the same protocol.
@@ -700,14 +809,14 @@
   <section class="module" id="blocks">
     <div class="section-num">// 02 - Primitives</div>
     <h2>The building blocks</h2>
-    <p class="subtitle">MCP organizes capabilities into a small set of named primitives. Three live on the server, three live on the client, and a handful are protocol-level. Know them cold.</p>
+    <p class="subtitle">MCP organizes capabilities into a small set of named primitives. Three live on the server, three used to live on the client (two are now deprecated), and a handful are protocol-level. Know them cold.</p>
 
     <h3>Server-side primitives <span class="badge info">what your server exposes</span></h3>
     <div class="card-grid cols-3">
       <div class="card tools">
         <div class="card-icon">T</div>
         <h4>Tools</h4>
-        <p>Functions the model can invoke - query a DB, send an email, create a GitHub issue. Each has a name, description and JSON Schema.</p>
+        <p>Functions the model can invoke - query a DB, send an email, create a GitHub issue. Each has a name, description and JSON Schema. Since <code>2026-07-28</code>, schemas may use any JSON Schema 2020-12 keywords.</p>
         <span class="tag">model-controlled</span>
       </div>
       <div class="card resources">
@@ -725,32 +834,40 @@
     </div>
 
     <h3>Client-side primitives <span class="badge info">what the server can ask the host to do</span></h3>
+    <div class="callout warn">
+      <strong>These no longer flow as server-initiated requests -&gt;</strong> As of <code>2026-07-28</code> a server cannot call the client out of band. It returns an interim result saying "I need this input", and the client answers and retries. That's <a href="#how" style="color: var(--warn);">Multi Round-Trip Requests</a>.
+    </div>
     <div class="card-grid cols-3">
+      <div class="card prompts">
+        <div class="card-icon">?</div>
+        <h4>Elicitation <span class="badge good">active</span></h4>
+        <p>Server asks the user a structured follow-up question mid-flow - "Which environment do you want to deploy to?" The only client feature the modern spec still lists as active.</p>
+        <span class="tag">elicitation/create</span>
+      </div>
       <div class="card sampling">
         <div class="card-icon">S</div>
-        <h4>Sampling</h4>
-        <p>Server asks the host's LLM to run a completion - so an agentic server can reason without shipping its own API key. User must approve.</p>
-        <span class="tag">sampling/createMessage</span>
+        <h4>Sampling <span class="badge warn">deprecated</span></h4>
+        <p>Server asks the host's LLM to run a completion. Still functional through the deprecation window; new servers should integrate directly with an LLM provider API instead.</p>
+        <span class="tag">removable from 2027-07-28</span>
       </div>
-      <div class="card roots">
+      <div class="card sampling">
         <div class="card-icon">⌂</div>
-        <h4>Roots</h4>
-        <p>Client tells the server "you may operate within these URIs" - filesystem paths, repo URLs, namespaces. Dynamic, updatable.</p>
-        <span class="tag">scope boundary</span>
-      </div>
-      <div class="card elicitation">
-        <div class="card-icon">?</div>
-        <h4>Elicitation</h4>
-        <p>Server asks the user a structured follow-up question mid-flow - "Which environment do you want to deploy to?"</p>
-        <span class="tag">elicitation/create</span>
+        <h4>Roots <span class="badge warn">deprecated</span></h4>
+        <p>Client tells the server "you may operate within these URIs". Migration path: pass directories or files via tool parameters, resource URIs, or server configuration.</p>
+        <span class="tag">removable from 2027-07-28</span>
       </div>
     </div>
 
     <h3>Protocol-level primitives</h3>
     <ul class="feat">
-      <li><strong>Notifications</strong> - server-pushed events (tools changed, resource updated, log line) so hosts don't poll.</li>
-      <li><strong>Capability negotiation</strong> - at <code>initialize</code>, each side declares what features it supports.</li>
-      <li><strong>Logging</strong> - standardized channel for structured log records with levels: debug / info / warning / error.</li>
+      <li><strong>Per-request metadata (<code>_meta</code>)</strong> - replaces the handshake. Every request carries <code>io.modelcontextprotocol/protocolVersion</code> and <code>clientCapabilities</code> (both required); clients should add <code>clientInfo</code>, and servers should return <code>serverInfo</code> in each result.</li>
+      <li><strong><code>server/discover</code></strong> - mandatory RPC advertising supported versions, capabilities, identity and instructions. Optional for clients to call.</li>
+      <li><strong><code>subscriptions/listen</code></strong> - one long-lived stream for opted-in change notifications: <code>toolsListChanged</code>, <code>promptsListChanged</code>, <code>resourcesListChanged</code>, <code>resourceSubscriptions</code>. Servers must not push types the client didn't request.</li>
+      <li><strong>Caching hints</strong> - <code>ttlMs</code> and <code>cacheScope</code> (<code>public</code> / <code>private</code>) are required on list and read results. MRTR retries must never be cached.</li>
+      <li><strong>Result types</strong> - every result carries <code>resultType</code>: <code>"complete"</code> or <code>"input_required"</code>. A missing field from a legacy server means <code>"complete"</code>.</li>
+      <li><strong>Capability negotiation</strong> - per request, plus an <code>extensions</code> map on both client and server capabilities for opt-in features.</li>
+      <li><strong>Tracing</strong> - W3C Trace Context keys (<code>traceparent</code>, <code>tracestate</code>, <code>baggage</code>) are documented <code>_meta</code> conventions, so a tool call joins your distributed trace.</li>
+      <li><strong>Logging <span class="badge warn">deprecated</span></strong> - level is now set per request via <code>io.modelcontextprotocol/logLevel</code>; <code>logging/setLevel</code> is removed. Use <code>stderr</code> on stdio, or OpenTelemetry.</li>
     </ul>
   </section>
 
@@ -758,18 +875,24 @@
   <section class="module" id="how">
     <div class="section-num">// 03 - Mechanics</div>
     <h2>How MCP works, end-to-end</h2>
-    <p class="subtitle">Built on JSON-RPC 2.0. Every message is a request, response, or notification. Two standardized transports: <code>stdio</code> for local, <code>Streamable HTTP</code> for remote.</p>
+    <p class="subtitle">Built on JSON-RPC 2.0. Every message is a request, response, or notification - and since <code>2026-07-28</code>, every request is <em>self-describing</em>. Two standardized transports: <code>stdio</code> for local, <code>Streamable HTTP</code> for remote.</p>
 
     <div class="pill-row">
       <span class="pill">JSON-RPC 2.0</span>
+      <span class="pill good">Stateless core</span>
       <span class="pill">stdio transport</span>
       <span class="pill">Streamable HTTP</span>
-      <span class="pill">Server-Sent Events</span>
-      <span class="pill">Bidirectional</span>
+      <span class="pill good">MRTR</span>
+      <span class="pill good">Cacheable lists</span>
+      <span class="pill bad">No sessions</span>
+      <span class="pill bad">No handshake</span>
     </div>
 
+    <h3>There is no session, and no handshake</h3>
+    <p style="color: var(--text-dim); font-size: 15px;">This is the defining change of <code>2026-07-28</code>. No <code>initialize</code> exchange, no <code>Mcp-Session-Id</code> header, no per-connection list results, no SSE resumability, no <code>ping</code>. The practical consequence: <strong>any request can land on any instance behind a plain round-robin load balancer</strong> - no sticky routing, no shared session store, no drained sessions on redeploy. A server that genuinely needs cross-call state mints an explicit handle and hands it back as an ordinary tool argument.</p>
+
     <div class="diagram">
-      <div class="diagram-title">Animated session lifecycle - initialize -> discover -> operate -> notify -> shutdown</div>
+      <div class="diagram-title">Modern lifecycle - discover (optional) -&gt; list -&gt; call -&gt; resolve -&gt; subscribe (optional)</div>
       <svg viewBox="0 0 800 520" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <marker id="arrow-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
@@ -785,84 +908,121 @@
         <text x="180" y="60" text-anchor="middle" fill="#e5e9f0" font-size="14" font-weight="700">MCP Client (in Host)</text>
 
         <rect x="520" y="30" width="200" height="50" rx="10" fill="#151c2e" stroke="#a78bfa" stroke-width="1.5"/>
-        <text x="620" y="60" text-anchor="middle" fill="#e5e9f0" font-size="14" font-weight="700">MCP Server</text>
+        <text x="620" y="54" text-anchor="middle" fill="#e5e9f0" font-size="14" font-weight="700">MCP Server</text>
+        <text x="620" y="70" text-anchor="middle" fill="#8b95b1" font-size="10" font-family="JetBrains Mono, monospace">any instance</text>
 
         <line x1="180" y1="85" x2="180" y2="500" stroke="#1f2a44" stroke-width="1" stroke-dasharray="4 4"/>
         <line x1="620" y1="85" x2="620" y2="500" stroke="#1f2a44" stroke-width="1" stroke-dasharray="4 4"/>
 
-        <!-- Step 1: initialize -->
+        <!-- Step 0: server/discover (optional) -->
         <g>
-          <circle cx="50" cy="110" r="13" fill="#5eead4"/>
-          <text x="50" y="115" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">1</text>
-          <line x1="180" y1="110" x2="620" y2="110" stroke="#5eead4" stroke-width="2" marker-end="url(#arrow-r)" class="anim-line"/>
-          <text x="400" y="103" text-anchor="middle" fill="#e5e9f0" font-size="12" font-family="JetBrains Mono, monospace">initialize { capabilities }</text>
+          <circle cx="50" cy="115" r="13" fill="#5d6987"/>
+          <text x="50" y="120" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">0</text>
+          <line x1="180" y1="110" x2="620" y2="110" stroke="#5d6987" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arrow-r)"/>
+          <text x="400" y="103" text-anchor="middle" fill="#8b95b1" font-size="12" font-family="JetBrains Mono, monospace">server/discover   (OPTIONAL)</text>
+          <line x1="620" y1="132" x2="180" y2="132" stroke="#5d6987" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arrow-l)"/>
+          <text x="400" y="147" text-anchor="middle" fill="#5d6987" font-size="10.5" font-family="JetBrains Mono, monospace">supportedVersions · capabilities · ttlMs</text>
         </g>
 
-        <!-- Step 2: init response -->
+        <!-- Step 1: tools/list -->
         <g>
-          <circle cx="50" cy="160" r="13" fill="#a78bfa"/>
-          <text x="50" y="165" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">2</text>
-          <line x1="620" y1="160" x2="180" y2="160" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrow-l)" class="anim-line"/>
-          <text x="400" y="153" text-anchor="middle" fill="#e5e9f0" font-size="12" font-family="JetBrains Mono, monospace">result { server capabilities }</text>
+          <circle cx="50" cy="190" r="13" fill="#5eead4"/>
+          <text x="50" y="195" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">1</text>
+          <line x1="180" y1="185" x2="620" y2="185" stroke="#5eead4" stroke-width="2" marker-end="url(#arrow-r)" class="anim-line"/>
+          <text x="400" y="178" text-anchor="middle" fill="#e5e9f0" font-size="12" font-family="JetBrains Mono, monospace">tools/list   _meta: { protocolVersion, ... }</text>
+          <line x1="620" y1="207" x2="180" y2="207" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrow-l)" class="anim-line"/>
+          <text x="400" y="222" text-anchor="middle" fill="#8b95b1" font-size="10.5" font-family="JetBrains Mono, monospace">resultType: "complete" · ttlMs · cacheScope</text>
         </g>
 
-        <!-- Step 3: initialized notification -->
+        <!-- Step 2: tools/call -->
         <g>
-          <circle cx="50" cy="210" r="13" fill="#5eead4"/>
-          <text x="50" y="215" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">3</text>
-          <line x1="180" y1="210" x2="620" y2="210" stroke="#5eead4" stroke-width="2" marker-end="url(#arrow-r)" class="anim-line"/>
-          <text x="400" y="203" text-anchor="middle" fill="#e5e9f0" font-size="12" font-family="JetBrains Mono, monospace">notifications/initialized</text>
-        </g>
-
-        <!-- Step 4: discover -->
-        <g>
-          <circle cx="50" cy="270" r="13" fill="#5eead4"/>
-          <text x="50" y="275" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">4</text>
-          <line x1="180" y1="265" x2="620" y2="265" stroke="#5eead4" stroke-width="2" marker-end="url(#arrow-r)" class="anim-line"/>
-          <text x="400" y="258" text-anchor="middle" fill="#e5e9f0" font-size="12" font-family="JetBrains Mono, monospace">tools/list · resources/list · prompts/list</text>
-          <line x1="620" y1="285" x2="180" y2="285" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrow-l)" class="anim-line"/>
-          <text x="400" y="300" text-anchor="middle" fill="#8b95b1" font-size="11">-> catalog returned</text>
-        </g>
-
-        <!-- Step 5: tool call -->
-        <g>
-          <circle cx="50" cy="340" r="13" fill="#5eead4"/>
-          <text x="50" y="345" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">5</text>
-          <line x1="180" y1="340" x2="620" y2="340" stroke="#5eead4" stroke-width="2.5" marker-end="url(#arrow-r)" class="anim-line"/>
-          <text x="400" y="333" text-anchor="middle" fill="#5eead4" font-size="12" font-family="JetBrains Mono, monospace" font-weight="700">tools/call { name, args }</text>
-          <!-- pulse dot -->
+          <circle cx="50" cy="265" r="13" fill="#5eead4"/>
+          <text x="50" y="270" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">2</text>
+          <line x1="180" y1="265" x2="620" y2="265" stroke="#5eead4" stroke-width="2.5" marker-end="url(#arrow-r)" class="anim-line"/>
+          <text x="400" y="258" text-anchor="middle" fill="#5eead4" font-size="12" font-family="JetBrains Mono, monospace" font-weight="700">tools/call   Mcp-Method · Mcp-Name</text>
           <circle r="4" class="pulse-dot">
-            <animateMotion dur="2s" repeatCount="indefinite" path="M 180 340 L 620 340"/>
+            <animateMotion dur="2s" repeatCount="indefinite" path="M 180 265 L 620 265"/>
           </circle>
         </g>
 
-        <!-- Step 6: result -->
+        <!-- Step 3a: input_required -->
         <g>
-          <circle cx="50" cy="390" r="13" fill="#a78bfa"/>
-          <text x="50" y="395" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">6</text>
-          <line x1="620" y1="390" x2="180" y2="390" stroke="#a78bfa" stroke-width="2.5" marker-end="url(#arrow-l)" class="anim-line"/>
-          <text x="400" y="383" text-anchor="middle" fill="#a78bfa" font-size="12" font-family="JetBrains Mono, monospace" font-weight="700">result { structured content }</text>
+          <circle cx="50" cy="315" r="13" fill="#fbbf24"/>
+          <text x="50" y="320" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">3</text>
+          <line x1="620" y1="310" x2="180" y2="310" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow-l)" class="anim-line"/>
+          <text x="400" y="303" text-anchor="middle" fill="#fbbf24" font-size="12" font-family="JetBrains Mono, monospace" font-weight="700">resultType: "input_required"</text>
+          <text x="400" y="326" text-anchor="middle" fill="#8b95b1" font-size="10.5" font-family="JetBrains Mono, monospace">inputRequests · requestState</text>
+        </g>
+
+        <!-- Step 4: MRTR retry -->
+        <g>
+          <circle cx="50" cy="370" r="13" fill="#fbbf24"/>
+          <text x="50" y="375" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">4</text>
+          <line x1="180" y1="365" x2="620" y2="365" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow-r)" class="anim-line"/>
+          <text x="400" y="358" text-anchor="middle" fill="#fbbf24" font-size="12" font-family="JetBrains Mono, monospace" font-weight="700">RETRY: same params + inputResponses</text>
+          <text x="400" y="381" text-anchor="middle" fill="#5d6987" font-size="10.5">new request id · may hit a different instance</text>
+        </g>
+
+        <!-- Step 5: result -->
+        <g>
+          <circle cx="50" cy="420" r="13" fill="#a78bfa"/>
+          <text x="50" y="425" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">5</text>
+          <line x1="620" y1="415" x2="180" y2="415" stroke="#a78bfa" stroke-width="2.5" marker-end="url(#arrow-l)" class="anim-line"/>
+          <text x="400" y="408" text-anchor="middle" fill="#a78bfa" font-size="12" font-family="JetBrains Mono, monospace" font-weight="700">resultType: "complete"</text>
           <circle r="4" fill="#a78bfa" filter="drop-shadow(0 0 6px #a78bfa)">
-            <animateMotion dur="2s" begin="0.5s" repeatCount="indefinite" path="M 620 390 L 180 390"/>
+            <animateMotion dur="2s" begin="0.5s" repeatCount="indefinite" path="M 620 415 L 180 415"/>
           </circle>
         </g>
 
-        <!-- Step 7: notifications -->
+        <!-- Step 6: subscriptions/listen -->
         <g>
-          <circle cx="50" cy="440" r="13" fill="#f472b6"/>
-          <text x="50" y="445" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">7</text>
-          <line x1="620" y1="440" x2="180" y2="440" stroke="#f472b6" stroke-width="2" stroke-dasharray="3 3" marker-end="url(#arrow-l)"/>
-          <text x="400" y="433" text-anchor="middle" fill="#f472b6" font-size="11" font-family="JetBrains Mono, monospace">notifications/tools/list_changed</text>
-        </g>
-
-        <!-- Step 8: shutdown -->
-        <g>
-          <circle cx="50" cy="490" r="13" fill="#5eead4"/>
-          <text x="50" y="495" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">8</text>
-          <line x1="180" y1="490" x2="620" y2="490" stroke="#5eead4" stroke-width="2" marker-end="url(#arrow-r)" class="anim-line"/>
-          <text x="400" y="483" text-anchor="middle" fill="#e5e9f0" font-size="12" font-family="JetBrains Mono, monospace">shutdown</text>
+          <circle cx="50" cy="472" r="13" fill="#f472b6"/>
+          <text x="50" y="477" text-anchor="middle" fill="#0a0e1a" font-size="12" font-weight="700">6</text>
+          <line x1="180" y1="467" x2="620" y2="467" stroke="#f472b6" stroke-width="2" marker-end="url(#arrow-r)" class="anim-line"/>
+          <text x="400" y="460" text-anchor="middle" fill="#f472b6" font-size="12" font-family="JetBrains Mono, monospace">subscriptions/listen   (OPTIONAL)</text>
+          <line x1="620" y1="489" x2="180" y2="489" stroke="#f472b6" stroke-width="2" stroke-dasharray="3 3" marker-end="url(#arrow-l)"/>
+          <text x="400" y="504" text-anchor="middle" fill="#8b95b1" font-size="10.5" font-family="JetBrains Mono, monospace">ack, then notifications/tools/list_changed ...</text>
         </g>
       </svg>
+    </div>
+
+    <h3>Multi Round-Trip Requests (MRTR)</h3>
+    <p style="color: var(--text-dim); font-size: 15px;">Server-initiated requests needed an open, sticky stream, so they couldn't survive a stateless core. MRTR inverts them. When a server needs an elicitation, a sampling completion or a roots list, it does <strong>not</strong> call the client - it returns an interim result:</p>
+
+    <div class="card-grid cols-2">
+      <div class="card sampling">
+        <div class="card-icon">↩</div>
+        <h4>Server returns</h4>
+        <p><code>resultType: "input_required"</code> plus an <code>inputRequests</code> map (keys are server-assigned ids; values are <code>elicitation/create</code>, <code>sampling/createMessage</code> or <code>roots/list</code> request objects) and an opaque <code>requestState</code>.</p>
+      </div>
+      <div class="card tools">
+        <div class="card-icon">↪</div>
+        <h4>Client retries</h4>
+        <p>The same request, a <strong>new request id</strong>, now carrying <code>inputResponses</code> keyed by the same ids plus the echoed <code>requestState</code>. Because the state travels with the retry, the second call can land on a different instance.</p>
+      </div>
+    </div>
+
+    <h3>Header-based routing</h3>
+    <p style="color: var(--text-dim); font-size: 15px;">Streamable HTTP POSTs must now carry standard headers so gateways, rate limiters and WAFs can route and meter without parsing the body. A mismatch between a header and the body is a <code>HeaderMismatch</code> error (<code>-32020</code>).</p>
+    <div class="compare">
+      <div class="compare-header">
+        <div>Header</div>
+        <div class="api-col">Source</div>
+        <div class="mcp-col">Required on</div>
+      </div>
+      <div class="compare-row"><div class="dim">MCP-Protocol-Version</div><div>the request's protocol version</div><div class="mcp">all requests</div></div>
+      <div class="compare-row"><div class="dim">Mcp-Method</div><div><code>method</code></div><div class="mcp">all requests</div></div>
+      <div class="compare-row"><div class="dim">Mcp-Name</div><div><code>params.name</code> or <code>params.uri</code></div><div class="mcp"><code>tools/call</code>, <code>resources/read</code>, <code>prompts/get</code></div></div>
+    </div>
+    <p style="color: var(--text-dim); font-size: 15px;">Tools may additionally promote individual parameters into HTTP headers with an <code>x-mcp-header</code> annotation in the input schema - useful for routing on a tenant or region without cracking the payload open.</p>
+
+    <h3>Error codes</h3>
+    <div class="pill-row">
+      <span class="pill bad">-32000..-32019 legacy, do not allocate</span>
+      <span class="pill good">-32020 HeaderMismatch</span>
+      <span class="pill good">-32021 MissingRequiredClientCapability</span>
+      <span class="pill good">-32022 UnsupportedProtocolVersion</span>
+      <span class="pill">resource not found: -32002 &rarr; -32602</span>
     </div>
 
     <h3>The two transports, side by side</h3>
@@ -875,8 +1035,12 @@
       <div class="card resources">
         <div class="card-icon">⌘</div>
         <h4>Streamable HTTP</h4>
-        <p>Server runs as a remote service. Client POSTs JSON-RPC; server streams responses and notifications over SSE on the same connection. This is how multi-tenant production servers run.</p>
+        <p>Server runs as a remote service. Client POSTs JSON-RPC; the server may stream request-scoped notifications over SSE on that response. This is how multi-tenant production servers run - and since <code>2026-07-28</code> it's just an ordinary HTTP workload.</p>
       </div>
+    </div>
+
+    <div class="callout warn">
+      <strong>Don't build on HTTP+SSE -&gt;</strong> The legacy HTTP+SSE transport, deprecated since <code>2025-03-26</code>, is now formally Deprecated under the lifecycle policy and eligible for removal three months after SEP-2596 reaches Final. Migrate to Streamable HTTP.
     </div>
   </section>
 
@@ -889,13 +1053,15 @@
     <ol class="steps">
       <li><strong>Define the agent story first.</strong> Write the user-and-agent workflows you want to support, then design the minimum tools to satisfy them in one or two calls - not seven.</li>
       <li><strong>Pick the right transport.</strong> stdio for local; Streamable HTTP for remote multi-tenant.</li>
-      <li><strong>Choose stateful vs stateless deliberately.</strong> Default to stateless; externalize session state to Redis/DynamoDB.</li>
+      <li><strong>Design for statelessness - it's now the protocol's default.</strong> Not a deployment preference any more. Every handler must be independently servable by any instance; mint explicit handles for anything spanning calls.</li>
       <li><strong>Budget your tool surface.</strong> 5-8 tools per server is the sweet spot. Past ~12, agent performance degrades.</li>
       <li><strong>Write tool descriptions for the LLM.</strong> Action-first, disambiguating, under ~200 tokens. They go straight into the context window.</li>
       <li><strong>Design payloads for context economy.</strong> Return only what the agent needs for the next decision. Offer a <code>verbose</code> flag if power users need more.</li>
-      <li><strong>Errors are guidance, not just failures.</strong> "Permission denied" is bad. "Reauthenticate with repo:write scope" is useful.</li>
-      <li><strong>Version gracefully.</strong> Tool names and schemas are a public API. Add fields as optional; never repurpose existing ones.</li>
-      <li><strong>Observability from day one.</strong> Structured logs, per-tool latency, audit trail of who called what.</li>
+      <li><strong>Set caching hints honestly.</strong> A generous <code>ttlMs</code> on a stable catalog saves a round trip every turn. The same on a per-user tool list is a correctness bug - and <code>cacheScope: "public"</code> on anything user-specific is a data-leak bug. When in doubt: <code>private</code>, short TTL.</li>
+      <li><strong>Errors are guidance, not just failures.</strong> "Permission denied" is bad. "Reauthenticate with repo:write scope" is useful. Use the allocated code ranges; never invent codes in <code>-32020..-32099</code>.</li>
+      <li><strong>Version gracefully.</strong> Tool names and schemas are a public API. Add fields as optional; never repurpose existing ones. Return a deterministic tool order so client and prompt caches stay warm.</li>
+      <li><strong>Plan your dual-era story.</strong> You'll serve legacy and modern callers together for a while. Let <code>server/discover</code> and <code>UnsupportedProtocolVersionError</code> do the negotiating.</li>
+      <li><strong>Observability from day one.</strong> Structured logs, per-tool latency, audit trail of who called what. Propagate <code>traceparent</code> from <code>_meta</code>.</li>
     </ol>
   </section>
 
@@ -912,14 +1078,18 @@
         <div class="mcp-col">MCP</div>
       </div>
       <div class="compare-row"><div class="dim">consumer</div><div>Human developer writing code</div><div class="mcp">LLM agent at runtime</div></div>
-      <div class="compare-row"><div class="dim">discovery</div><div>Docs at build time</div><div class="mcp"><code>tools/list</code> at runtime</div></div>
-      <div class="compare-row"><div class="dim">state</div><div>Stateless request/response</div><div class="mcp">Stateful JSON-RPC session</div></div>
-      <div class="compare-row"><div class="dim">direction</div><div>Client -> server only</div><div class="mcp">Bidirectional (push, sample, elicit)</div></div>
-      <div class="compare-row"><div class="dim">schema</div><div>OpenAPI (for humans)</div><div class="mcp">JSON Schema + natural-language</div></div>
+      <div class="compare-row"><div class="dim">discovery</div><div>Docs at build time</div><div class="mcp"><code>server/discover</code> + <code>tools/list</code> at runtime</div></div>
+      <div class="compare-row"><div class="dim">state</div><div>Stateless request/response</div><div class="mcp">Stateless request/response (since <code>2026-07-28</code>)</div></div>
+      <div class="compare-row"><div class="dim">cross-call state</div><div>Your own IDs and cursors</div><div class="mcp">Explicit server-minted handles as tool arguments</div></div>
+      <div class="compare-row"><div class="dim">direction</div><div>Client -> server only</div><div class="mcp">Client -> server, plus MRTR interim results and opt-in streams</div></div>
+      <div class="compare-row"><div class="dim">schema</div><div>OpenAPI (for humans)</div><div class="mcp">JSON Schema 2020-12 + natural-language</div></div>
       <div class="compare-row"><div class="dim">errors</div><div>HTTP status codes</div><div class="mcp">Guidance text agents can act on</div></div>
-      <div class="compare-row"><div class="dim">auth</div><div>Many flavors, ad hoc</div><div class="mcp">OAuth 2.1 + PKCE + Resource Indicators</div></div>
+      <div class="compare-row"><div class="dim">caching</div><div>HTTP <code>Cache-Control</code></div><div class="mcp"><code>ttlMs</code> + <code>cacheScope</code> on list and read results</div></div>
+      <div class="compare-row"><div class="dim">auth</div><div>Many flavors, ad hoc</div><div class="mcp">OAuth 2.1 + PKCE + Resource Indicators + CIMD</div></div>
       <div class="compare-row"><div class="dim">best for</div><div>Deterministic system-to-system</div><div class="mcp">Open-ended agent workflows</div></div>
     </div>
+
+    <p style="color: var(--text-dim); font-size: 15px;">Note how much of that table converged on REST in <code>2026-07-28</code>. That's the point: a remote MCP server is now, operationally, just another HTTP workload. What still distinguishes MCP is <em>who the consumer is</em> and <em>how the contract is described</em>.</p>
 
     <h3>When to reach for each</h3>
     <div class="card-grid cols-2">
@@ -1008,12 +1178,16 @@
 
     <h3>The five phases of agent ↔ MCP</h3>
     <ol class="steps">
-      <li><strong>Connection</strong> - host spawns/connects each configured server, runs the initialize handshake.</li>
-      <li><strong>Discovery</strong> - client calls <code>tools/list</code>; descriptions land in the agent's system prompt.</li>
+      <li><strong>Connection</strong> - host spawns or connects each configured server. There's no handshake to run; it may call <code>server/discover</code> to pin a version and read capabilities.</li>
+      <li><strong>Discovery</strong> - client calls <code>tools/list</code>; descriptions land in the agent's system prompt. Because results carry <code>ttlMs</code>, a well-behaved host caches them rather than re-listing every turn.</li>
       <li><strong>Decision</strong> - LLM, given the catalog, decides whether to answer or call a tool. MCP's richer descriptions improve tool-selection accuracy materially.</li>
-      <li><strong>Invocation</strong> - chosen call goes out as <code>tools/call</code>; server executes; result feeds back as a tool message.</li>
-      <li><strong>Streaming &amp; callbacks</strong> - long tools stream progress; servers can push <code>list_changed</code>, run sampling, elicit user input.</li>
+      <li><strong>Invocation</strong> - chosen call goes out as <code>tools/call</code> with <code>_meta</code> and the routing headers; server executes; result feeds back as a tool message.</li>
+      <li><strong>Mid-flight input &amp; notifications</strong> - long tools stream <code>notifications/progress</code> on their own response. If the server needs input it returns <code>input_required</code> and the client retries (MRTR). Genuinely long work returns a <strong>task handle</strong> the client polls. Catalog changes arrive on an opt-in <code>subscriptions/listen</code> stream.</li>
     </ol>
+
+    <div class="callout">
+      <strong>Termination -&gt;</strong> There's no session to close. The client simply stops sending requests and cancels any open <code>subscriptions/listen</code> stream. Nothing on the server needs tearing down.
+    </div>
   </section>
 
   <!-- ============== 7. SECURITY ============== -->
@@ -1127,19 +1301,37 @@
       </svg>
     </div>
 
+    <h3>What changed in <code>2026-07-28</code> <span class="badge info">authorization hardening</span></h3>
+    <ul class="feat">
+      <li><strong>Validate the <code>iss</code> parameter (RFC 9207)</strong> - authorization servers should return <code>iss</code>, and clients <em>must</em> validate it against the recorded issuer <em>before</em> redeeming the authorization code. This closes an authorization-server mix-up hole. <span class="badge info">SEP-2468</span></li>
+      <li><strong>Prefer CIMD over DCR</strong> - OAuth Dynamic Client Registration is deprecated in favor of <strong>Client ID Metadata Documents</strong>, where the <code>client_id</code> <em>is</em> an HTTPS URL serving a JSON document with <code>client_id</code>, <code>client_name</code> and <code>redirect_uris</code>. The answer to the very common MCP case where client and server have no prior relationship.</li>
+      <li><strong>Issuer-bound credentials</strong> - clients must key persisted credentials by issuer, must not reuse them with a different authorization server, and must re-register when the authorization server changes. <span class="badge info">SEP-2352</span></li>
+      <li><strong><code>application_type</code> in DCR</strong> - clients must declare it, so authorization servers stop rejecting <code>localhost</code> redirects for desktop and CLI apps. <span class="badge info">SEP-837</span></li>
+      <li><strong>Enterprise-Managed Authorization</strong> - an official extension, stable since June 2026. The client gets an ID-JAG from the IdP during SSO and exchanges it for an access token at the MCP server's authorization server, so an organization provisions MCP access centrally and users skip the per-server OAuth dance entirely.</li>
+    </ul>
+
+    <div class="callout warn">
+      <strong>New risk created by the stateless core -&gt;</strong> Anything you hand back for the client to pass into a later call - a cursor, a job ID, an MRTR <code>requestState</code> blob - is now a token travelling through the model's context. Assume it will be logged, summarized and possibly replayed. <strong>Sign or encrypt it, bind it to the authenticated principal, re-check that binding on use, give it an expiry, and put nothing sensitive in it in plaintext.</strong>
+    </div>
+
     <h3>The compact security rule</h3>
     <div class="callout warn">
-      <strong>The six commandments -></strong> Authenticate every request. Authorize every tool call. Validate every input. Sanitize every output. Encrypt every connection. Log every action.
+      <strong>The seven commandments -&gt;</strong> Authenticate every request. Authorize every tool call. Validate every input. Sanitize every output. Encrypt every connection. <strong>Sign every handle.</strong> Log every action.
     </div>
+
+    <p style="color: var(--text-dim); font-size: 15px;">"Every request" is now literal. With no session there is no connection-scoped "already authorized at connection time" - each request must be independently authenticated and authorized.</p>
 
     <h3>Security baseline for HTTP deployments</h3>
     <ul class="feat">
       <li><strong>OAuth 2.1 with PKCE</strong> - use the standard authorization flow for protected HTTP MCP servers.</li>
       <li><strong>Resource Indicators (RFC 8707)</strong> - every access token must bind to the specific MCP server URI. Server rejects mismatched audience claims.</li>
+      <li><strong>Validate <code>iss</code> (RFC 9207)</strong> before redeeming an authorization code.</li>
       <li><strong>Short-lived access tokens</strong> - 15-60 minutes - paired with refresh tokens.</li>
       <li><strong>TLS for HTTP deployments</strong> - including internal systems unless local development is explicitly isolated.</li>
       <li><strong>Human-in-the-loop for destructive actions</strong> - refunds, deletes, money movement need explicit user confirmation.</li>
       <li><strong>Allow-list outbound calls</strong> - block egress to user-supplied URLs unless that is literally the tool's job.</li>
+      <li><strong>Never auto-dereference external <code>$ref</code> URIs</strong> in tool schemas, and bound the resources spent resolving composition keywords.</li>
+      <li><strong>Validate promoted headers</strong> - <code>x-mcp-header</code> values originate in model-generated tool arguments. Reject header/body mismatches rather than trusting whichever copy is convenient.</li>
     </ul>
   </section>
 
@@ -1200,47 +1392,78 @@
 
   <!-- ============== 9. SESSIONS ============== -->
   <section class="module" id="sessions">
-    <div class="section-num">// 09 - Session Management</div>
-    <h2>Session management - shared vs per-agent</h2>
-    <p class="subtitle">One of the most consequential decisions in MCP architecture. The 2026 roadmap highlights transport scalability, stateless operation, and explicit session handling.</p>
+    <div class="section-num">// 09 - State Management</div>
+    <h2>State management - life after protocol-level sessions</h2>
+    <p class="subtitle">The stateful-vs-stateless debate that dominated MCP architecture through 2025 and early 2026 has been settled by the spec: <strong>stateless won</strong>. The protocol no longer has sessions. State didn't disappear - it became explicit.</p>
 
-    <h3>Stateful vs stateless tradeoffs</h3>
-    <div class="card-grid cols-2">
-      <div class="card tools">
-        <div class="card-icon">●</div>
-        <h4>Stateful - the upside</h4>
-        <p>Handshake paid once. Subsequent calls are compact and fast. Multi-step workflows hold server-side state (cursors, transactions). Bidirectional flow stays open for notifications, sampling, elicitation.</p>
+    <div class="callout warn">
+      <strong>This section changed substantially in <code>2026-07-28</code>.</strong> Under <code>2025-11-25</code> and earlier, a session ran from <code>initialize</code> to shutdown and was pinned by an <code>Mcp-Session-Id</code> header. That was the single biggest obstacle to running MCP servers like ordinary web services. SEP-2567 and SEP-2575 removed the session and the handshake together.
+    </div>
+
+    <h3>What was removed, and what replaced it</h3>
+    <div class="compare">
+      <div class="compare-header">
+        <div>Concern</div>
+        <div class="api-col">Old mechanism (legacy)</div>
+        <div class="mcp-col">Modern replacement</div>
       </div>
-      <div class="card elicitation">
-        <div class="card-icon">○</div>
-        <h4>Stateful - the cost</h4>
-        <p>Sticky routing fights load balancers and rolling deploys. Restart drops sessions unless externalized. Horizontal scaling has to plan for concurrent open sessions, not just request rate.</p>
+      <div class="compare-row"><div class="dim">setup</div><div><code>initialize</code> / <code>notifications/initialized</code></div><div class="mcp">Per-request <code>_meta</code></div></div>
+      <div class="compare-row"><div class="dim">capabilities</div><div>Learned at handshake</div><div class="mcp"><code>server/discover</code> (optional, cacheable)</div></div>
+      <div class="compare-row"><div class="dim">identity</div><div><code>Mcp-Session-Id</code> header</div><div class="mcp">Nothing - requests are self-describing</div></div>
+      <div class="compare-row"><div class="dim">catalogs</div><div>Per-connection list results</div><div class="mcp">Connection-independent, cacheable</div></div>
+      <div class="compare-row"><div class="dim">server asks client</div><div>Server-initiated requests</div><div class="mcp">MRTR interim result + client retry</div></div>
+      <div class="compare-row"><div class="dim">change events</div><div><code>resources/subscribe</code> + HTTP GET stream</div><div class="mcp"><code>subscriptions/listen</code></div></div>
+      <div class="compare-row"><div class="dim">dropped stream</div><div>SSE resumability (<code>Last-Event-ID</code>)</div><div class="mcp">Nothing - re-issue with a new request id</div></div>
+      <div class="compare-row"><div class="dim">slow work</div><div>Long-blocking calls</div><div class="mcp">Tasks extension (durable handles, polling)</div></div>
+    </div>
+
+    <h3>Where state actually lives now</h3>
+    <div class="card-grid cols-3">
+      <div class="card tools">
+        <div class="card-icon">1</div>
+        <h4>Cursors &amp; opaque tokens</h4>
+        <p>Pagination, a partially built query, a draft. The server mints an identifier, returns it, and the agent passes it to the next call. Backed by Redis or your database, readable by any instance.</p>
+      </div>
+      <div class="card sampling">
+        <div class="card-icon">2</div>
+        <h4><code>requestState</code></h4>
+        <p>Scoped to one logical request that needed user input. The server encodes what it needs; the client echoes it back verbatim on the retry. <strong>Sign it.</strong></p>
+      </div>
+      <div class="card resources">
+        <div class="card-icon">3</div>
+        <h4>Task handles</h4>
+        <p>For work that outlives a single HTTP exchange. Durable by definition - the client can crash, restart, and resume polling <code>tasks/get</code> with the same <code>taskId</code>.</p>
       </div>
     </div>
 
+    <div class="callout">
+      <strong>The design test -&gt;</strong> Could a second, freshly started instance of my server serve this request correctly, given only the request itself and shared storage? If not, you have hidden state. If you still need sticky routing, you have hidden state.
+    </div>
+
     <div class="diagram">
-      <div class="diagram-title">Recommended pattern - one MCP session per (user, agent_session), state externalized</div>
+      <div class="diagram-title">The modern pattern - stateless instances behind plain round-robin, state in a shared store</div>
       <svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg">
         <!-- 3 user agents -->
         <g>
           <rect x="40" y="40" width="140" height="60" rx="10" fill="#151c2e" stroke="#5eead4" stroke-width="1.5"/>
           <text x="110" y="65" text-anchor="middle" fill="#e5e9f0" font-size="12" font-weight="700">User A · Agent</text>
-          <text x="110" y="84" text-anchor="middle" fill="#8b95b1" font-size="10" font-family="JetBrains Mono, monospace">session: a1</text>
+          <text x="110" y="84" text-anchor="middle" fill="#8b95b1" font-size="10" font-family="JetBrains Mono, monospace">handle: a1</text>
 
           <rect x="40" y="130" width="140" height="60" rx="10" fill="#151c2e" stroke="#a78bfa" stroke-width="1.5"/>
           <text x="110" y="155" text-anchor="middle" fill="#e5e9f0" font-size="12" font-weight="700">User B · Agent</text>
-          <text x="110" y="174" text-anchor="middle" fill="#8b95b1" font-size="10" font-family="JetBrains Mono, monospace">session: b1</text>
+          <text x="110" y="174" text-anchor="middle" fill="#8b95b1" font-size="10" font-family="JetBrains Mono, monospace">handle: b1</text>
 
           <rect x="40" y="220" width="140" height="60" rx="10" fill="#151c2e" stroke="#f472b6" stroke-width="1.5"/>
           <text x="110" y="245" text-anchor="middle" fill="#e5e9f0" font-size="12" font-weight="700">User C · Agent</text>
-          <text x="110" y="264" text-anchor="middle" fill="#8b95b1" font-size="10" font-family="JetBrains Mono, monospace">session: c1</text>
+          <text x="110" y="264" text-anchor="middle" fill="#8b95b1" font-size="10" font-family="JetBrains Mono, monospace">handle: c1</text>
         </g>
 
         <!-- Load balancer -->
         <g>
           <rect x="260" y="130" width="100" height="60" rx="10" fill="#151c2e" stroke="#fbbf24" stroke-width="1.5"/>
-          <text x="310" y="158" text-anchor="middle" fill="#e5e9f0" font-size="12" font-weight="700">Load</text>
-          <text x="310" y="176" text-anchor="middle" fill="#e5e9f0" font-size="12" font-weight="700">balancer</text>
+          <text x="310" y="152" text-anchor="middle" fill="#e5e9f0" font-size="12" font-weight="700">Load</text>
+          <text x="310" y="168" text-anchor="middle" fill="#e5e9f0" font-size="12" font-weight="700">balancer</text>
+          <text x="310" y="184" text-anchor="middle" fill="#fbbf24" font-size="9.5" font-family="JetBrains Mono, monospace">round-robin</text>
         </g>
 
         <!-- 3 stateless MCP server instances -->
@@ -1263,7 +1486,7 @@
           <rect x="680" y="100" width="180" height="120" rx="14" fill="#151c2e" stroke="#a78bfa" stroke-width="2"/>
           <text x="770" y="135" text-anchor="middle" fill="#e5e9f0" font-size="14" font-weight="700">Shared State Store</text>
           <text x="770" y="158" text-anchor="middle" fill="#a78bfa" font-size="12" font-family="JetBrains Mono, monospace">Redis · DynamoDB</text>
-          <text x="770" y="188" text-anchor="middle" fill="#8b95b1" font-size="11">session metadata</text>
+          <text x="770" y="188" text-anchor="middle" fill="#8b95b1" font-size="11">signed handles · tasks</text>
           <text x="770" y="205" text-anchor="middle" fill="#8b95b1" font-size="11">cursors · checkpoints</text>
         </g>
 
@@ -1282,18 +1505,33 @@
       </svg>
     </div>
 
-    <h3>Shared session vs one-per-agent</h3>
+    <h3>The practical recipe</h3>
+    <ul class="feat">
+      <li><strong>Handlers are pure functions</strong> of <code>(request, shared storage)</code>. No process-local session maps.</li>
+      <li><strong>Authenticate and authorize on every request.</strong> There is no connection-scoped "already checked".</li>
+      <li><strong>Mint explicit handles</strong> for anything spanning calls; sign them, scope them to a principal, expire them.</li>
+      <li><strong>Put shared state in a fast store</strong> (Redis, DynamoDB, Postgres) keyed by the handle, not by a connection.</li>
+      <li><strong>Hold heavy shared resources</strong> - warmed indexes, connection pools, model caches - at process or sidecar level, <strong>read-only</strong>, never keyed to a caller.</li>
+      <li><strong>Reap stale handles and tasks</strong> on a timer, the way you'd expire any other token.</li>
+      <li><strong>Use <code>ttlMs</code></strong> so clients stop re-listing; use <code>subscriptions/listen</code> only for clients that genuinely need push.</li>
+    </ul>
+
+    <h3>Per-agent isolation is still your job</h3>
     <div class="card-grid cols-2">
-      <div class="card tools">
-        <div class="card-icon">★</div>
-        <h4>One per agent <span class="badge good">recommended</span></h4>
-        <p>Each agent session gets its own MCP session. State is isolated. A misbehaving agent can't pollute another. Auth scopes bound to the calling user. What virtually all production hosts do.</p>
-      </div>
       <div class="card elicitation">
         <div class="card-icon">⚠</div>
-        <h4>Shared across agents <span class="badge crit">dangerous</span></h4>
-        <p>Cross-tenant leakage risk · auth confusion (whose scopes?) · concurrent-modification bugs. If you need shared expensive resources, <strong>share the resource, not the session</strong>.</p>
+        <h4>The risk moved, it didn't vanish <span class="badge crit">watch this</span></h4>
+        <p>Everything that used to be dangerous about a shared session is now dangerous about a <strong>shared handle</strong>: cross-tenant leakage if a handle isn't bound to its principal · auth confusion about whose scopes apply · concurrent-modification bugs in whatever the handle points at.</p>
       </div>
+      <div class="card tools">
+        <div class="card-icon">★</div>
+        <h4>Share the resource, not the identity <span class="badge good">the rule</span></h4>
+        <p>A warmed index in a process-level cache is fine. A handle any caller can present is not. Bind every handle to its authenticated principal and re-check that binding on use.</p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>If you still support legacy clients -&gt;</strong> Dual-era servers keep the old session machinery alive for <code>2025-11-25</code> and earlier callers while serving modern requests statelessly. Don't let a legacy session's cached state leak into the modern path, and remember that sticky routing a legacy client needs is a property of that one path - not of your whole deployment. Route on the era, not on the service.
     </div>
   </section>
 
@@ -1301,7 +1539,7 @@
   <section class="module" id="best">
     <div class="section-num">// 10 - Architecture Best Practices</div>
     <h2>Architectural best practices</h2>
-    <p class="subtitle">Consolidated from the official spec, the 2026 roadmap, and what production teams have learned the hard way.</p>
+    <p class="subtitle">Consolidated from the <code>2026-07-28</code> specification, the August 2026 roadmap, and what production teams have learned the hard way.</p>
 
     <h3>Scope &amp; structure</h3>
     <div class="pill-row">
@@ -1318,22 +1556,32 @@
       <span class="pill good">LLM-readable descriptions</span>
       <span class="pill good">Versioned, additive changes</span>
       <span class="pill good">Structured content returns</span>
+      <span class="pill good">JSON Schema 2020-12</span>
+      <span class="pill good">Deterministic tool order</span>
     </div>
 
     <h3>Transport &amp; deployment</h3>
     <div class="pill-row">
       <span class="pill good">Stateless by default</span>
-      <span class="pill good">Externalized session state</span>
+      <span class="pill good">Externalized state, keyed by handle</span>
+      <span class="pill good">Emit the routing headers</span>
+      <span class="pill good">Deliberate ttlMs + cacheScope</span>
       <span class="pill good">Health + readiness probes</span>
-      <span class="pill good">Horizontal scale assumed</span>
+      <span class="pill good">Plain round-robin scaling</span>
+      <span class="pill bad">No HTTP+SSE</span>
+      <span class="pill bad">No sticky routing</span>
     </div>
 
     <h3>Security</h3>
     <div class="pill-row">
       <span class="pill good">OAuth 2.1 + PKCE</span>
       <span class="pill good">Resource Indicators</span>
+      <span class="pill good">Validate iss (RFC 9207)</span>
+      <span class="pill good">CIMD over DCR</span>
+      <span class="pill good">Issuer-bound credentials</span>
       <span class="pill good">Short-lived tokens</span>
-      <span class="pill good">Least-privilege scopes</span>
+      <span class="pill good">Least-privilege scopes, re-checked per request</span>
+      <span class="pill good">Sign + scope + expire every handle</span>
       <span class="pill good">Human confirm destructive ops</span>
       <span class="pill good">Allow-list egress</span>
     </div>
@@ -1342,17 +1590,20 @@
     <div class="pill-row">
       <span class="pill good">Idempotency keys</span>
       <span class="pill good">Timeouts + circuit breakers</span>
+      <span class="pill good">Tasks for anything slow</span>
       <span class="pill good">Classified errors with guidance</span>
       <span class="pill bad">Never leak stack traces</span>
     </div>
+    <p style="color: var(--text-dim); font-size: 15px;">Idempotency matters more now, not less: there's no stream resumability, so a dropped response means the client <em>will</em> re-issue the request.</p>
 
     <h3>Observability</h3>
     <div class="pill-row">
       <span class="pill good">Structured logs per call</span>
       <span class="pill good">p50/p95/p99 latency per tool</span>
-      <span class="pill good">Distributed traces</span>
+      <span class="pill good">traceparent from _meta</span>
       <span class="pill good">Audit trail for compliance</span>
       <span class="pill good">Tool-definition pinning</span>
+      <span class="pill bad">Not the Logging primitive</span>
     </div>
 
     <h3>Developer experience</h3>
@@ -1361,8 +1612,117 @@
       <li><strong>Read your <code>tools/list</code> out loud</strong> - if it doesn't make sense, the agent won't either.</li>
       <li><strong>Local dev mode</strong> - stdio + fake auth, runs against the real server logic.</li>
       <li><strong>Contract tests</strong> verifying JSON Schema of every tool's response, on every commit.</li>
+      <li><strong>A conformance run</strong> against the official suite (SEP-2484) - Standards Track SEPs can no longer reach Final without matching test scenarios, and the same discipline is worth borrowing.</li>
       <li><strong>Quarterly review</strong> of which tools agents actually call. Remove what isn't used.</li>
+      <li><strong>Extensions as feature flags</strong> - they're always opt-in and disabled by default, so a beta capability can reach a subset of clients before becoming default.</li>
+      <li><strong>Your own deprecation policy</strong> - the spec's Active &rarr; Deprecated &rarr; Removed lifecycle with a twelve-month minimum window is a reasonable template.</li>
     </ul>
+  </section>
+
+  <!-- ============== 11. EXTENSIONS ============== -->
+  <section class="module" id="extensions">
+    <div class="section-num">// 11 - Extensions &amp; Roadmap</div>
+    <h2>The extension ecosystem</h2>
+    <p class="subtitle"><code>2026-07-28</code> formalized extensions (SEP-2133) as the way to add capability without destabilizing the core. Understanding this is now part of understanding MCP, because several things that used to be core features live here.</p>
+
+    <h3>How extensions work</h3>
+    <ul class="feat">
+      <li><strong>Reverse-DNS identifiers</strong> - <code>{vendor-prefix}/{extension-name}</code>. Official ones use <code>io.modelcontextprotocol/</code>; third parties use a domain they own.</li>
+      <li><strong>Negotiated through the <code>extensions</code> map</strong> on client and server capabilities.</li>
+      <li><strong>Versioned independently</strong> of the core spec.</li>
+      <li><strong>Always disabled by default</strong>, requiring explicit developer opt-in. SDKs choose which to implement - check the SDK docs.</li>
+      <li><strong>Official extensions live in <code>ext-</code> repositories</strong> in the MCP GitHub org; incubating ones in <code>experimental-ext-</code> repos tied to a Working Group.</li>
+    </ul>
+
+    <div class="card-grid cols-2">
+      <div class="card tools">
+        <div class="card-icon">⧗</div>
+        <h4>Tasks <span class="badge info">io.modelcontextprotocol/tasks</span></h4>
+        <p>Experimental tasks left the core and were reshaped around statelessness. A supported request returns a <code>CreateTaskResult</code> (<code>resultType: "task"</code>) with a <code>taskId</code>, status, TTL and suggested polling interval - durably created <em>before</em> the response is sent. The client polls <code>tasks/get</code>; statuses are <code>working</code>, <code>input_required</code>, <code>completed</code>, <code>failed</code>, <code>cancelled</code>. Mid-flight input is answered with <strong><code>tasks/update</code></strong>. <code>tasks/result</code> and <code>tasks/list</code> are gone.</p>
+        <span class="tag">SEP-2663 · roadmap: fold back into core</span>
+      </div>
+      <div class="card prompts">
+        <div class="card-icon">▣</div>
+        <h4>MCP Apps <span class="badge info">ext-apps</span></h4>
+        <p>Servers ship interactive HTML - charts, forms, dashboards - that the host renders inline in a <strong>sandboxed iframe</strong>. A tool declares a UI resource via <code>_meta.ui.resourceUri</code>; the host preloads and renders it in place of a text result. The app can call tools, delegate actions to the host and reuse the user's connected integrations - and because actions flow through the same JSON-RPC path, the audit trail stays consistent.</p>
+        <span class="tag">SEP-1865</span>
+      </div>
+      <div class="card resources">
+        <div class="card-icon">🔑</div>
+        <h4>Authorization <span class="badge info">ext-auth</span></h4>
+        <p><strong>OAuth Client Credentials</strong> for machine-to-machine callers with no human in the loop. <strong>Enterprise-Managed Authorization</strong> (stable since June 2026) for ID-JAG token exchange during SSO, so an organization provisions MCP access centrally through its IdP.</p>
+        <span class="tag">zero-touch OAuth</span>
+      </div>
+      <div class="card roots">
+        <div class="card-icon">◈</div>
+        <h4>Skills over MCP <span class="badge info">ext-skills</span></h4>
+        <p>Discover Agent Skills - workflow instructions and their supporting files - through MCP resources, so a server can hand an agent structured know-how rather than only callable functions.</p>
+        <span class="tag">ext-skills</span>
+      </div>
+    </div>
+
+    <h3>The road ahead <span class="badge info">August 2026 roadmap</span></h3>
+    <p style="color: var(--text-dim); font-size: 15px;">Five priority areas guide the next release cycle. SEPs inside them get expedited review.</p>
+    <ol class="steps">
+      <li><strong>Agentic messaging primitives</strong> - server-initiated events (webhooks and channels) so clients stop polling for results; a composition review across the Agents, Transports and Triggers &amp; Events Working Groups; maturing Tasks toward core inclusion.</li>
+      <li><strong>HTTP-native transport unification</strong> - stretching the "an MCP server is just an HTTP workload" model to every deployment mode, including local servers speaking Streamable HTTP over stdio.</li>
+      <li><strong>Agent identity &amp; enterprise security</strong> - moving past "a person approves in a browser" to workloads with their own identity: DPoP (RFC 9449), Workload Identity Federation, the ID-JAG grant, and standard token exchange, with continued engagement in the IETF OAuth and WIMSE working groups.</li>
+      <li><strong>Improved primitives</strong> - one clear contract for tool result handling, plus <strong>progressive discovery</strong> so a server can offer a small entry point and reveal more of its catalog as the conversation narrows.</li>
+      <li><strong>Improved SDK developer experience</strong> - ergonomics, conformance testing and documentation, which matter more now that many developers build MCP servers by pointing an agent at the libraries.</li>
+    </ol>
+    <p style="color: var(--text-dim); font-size: 15px;">Separately, the <strong>Server Card</strong> Working Group is defining <code>.well-known</code> metadata conventions so a server can be discovered and reasoned about without connecting to it.</p>
+  </section>
+
+  <!-- ============== 12. MIGRATION ============== -->
+  <section class="module" id="migrate">
+    <div class="section-num">// 12 - Migration</div>
+    <h2>Migrating <code>2025-11-25</code> &rarr; <code>2026-07-28</code></h2>
+    <p class="subtitle">A practical checklist. Budget real time for this - it's a breaking change, though the SDKs absorb much of it.</p>
+
+    <h3>Server checklist</h3>
+    <ul class="feat">
+      <li><strong>Delete the handshake.</strong> Remove <code>initialize</code> / <code>notifications/initialized</code>. Read protocol version and client capabilities from <code>_meta</code> on every request.</li>
+      <li><strong>Implement <code>server/discover</code>.</strong> It's mandatory. Return <code>supportedVersions</code>, <code>capabilities</code>, <code>instructions</code>, <code>serverInfo</code>, plus <code>ttlMs</code> / <code>cacheScope</code>.</li>
+      <li><strong>Remove all per-connection state.</strong> Delete session maps keyed by <code>Mcp-Session-Id</code>. Mint explicit signed handles instead.</li>
+      <li><strong>Stop making server-initiated requests.</strong> Rewrite every <code>elicitation/create</code>, <code>sampling/createMessage</code> and <code>roots/list</code> call site to return <code>input_required</code> with <code>inputRequests</code> and <code>requestState</code>, and to resume from <code>inputResponses</code> on the retry.</li>
+      <li><strong>Add <code>resultType</code> to every result.</strong> <code>"complete"</code> unless it's an MRTR interim result.</li>
+      <li><strong>Add <code>ttlMs</code> and <code>cacheScope</code></strong> to <code>server/discover</code>, the three list methods, <code>resources/templates/list</code> and <code>resources/read</code>. Never on interim results.</li>
+      <li><strong>Return tools in a deterministic order.</strong></li>
+      <li><strong>Replace <code>resources/subscribe</code> and the HTTP GET endpoint</strong> with <code>subscriptions/listen</code>, honoring per-type opt-in and sending the acknowledgment first.</li>
+      <li><strong>Drop <code>ping</code>, <code>logging/setLevel</code> and <code>notifications/roots/list_changed</code>.</strong> Read <code>io.modelcontextprotocol/logLevel</code> from <code>_meta</code>, and emit <code>notifications/message</code> only for requests that set it.</li>
+      <li><strong>Drop SSE resumability.</strong> Remove <code>Last-Event-ID</code> handling and event IDs. Make side-effecting tools idempotent - clients will re-issue lost requests.</li>
+      <li><strong>Validate the routing headers</strong> and return <code>HeaderMismatch</code> (<code>-32020</code>) on a mismatch.</li>
+      <li><strong>Renumber error codes.</strong> <code>-32001</code>&rarr;<code>-32020</code>, <code>-32003</code>&rarr;<code>-32021</code>, <code>-32004</code>&rarr;<code>-32022</code>; resource-not-found <code>-32002</code>&rarr;<code>-32602</code>.</li>
+      <li><strong>Move long-running work to the Tasks extension</strong> rather than blocking.</li>
+      <li><strong>Re-check auth on every request.</strong> There's no connection-scoped authorization any more.</li>
+    </ul>
+
+    <h3>Client checklist</h3>
+    <ul class="feat">
+      <li><strong>Send <code>_meta</code> on every request</strong> - <code>protocolVersion</code> and <code>clientCapabilities</code> are required; send <code>clientInfo</code> too.</li>
+      <li><strong>Handle <code>UnsupportedProtocolVersionError</code> (<code>-32022</code>)</strong> by picking a version from the <code>supported</code> list and retrying.</li>
+      <li><strong>Implement the MRTR retry loop</strong> - on <code>input_required</code>, fulfil each entry in <code>inputRequests</code>, then re-issue the original request with a <strong>new request id</strong>, same params, plus <code>inputResponses</code> and the echoed <code>requestState</code>.</li>
+      <li><strong>Treat a missing <code>resultType</code> as <code>"complete"</code></strong> so legacy servers keep working.</li>
+      <li><strong>Honor <code>ttlMs</code> and <code>cacheScope</code></strong> - never serve a cached response across a different method or params, and never cache an MRTR retry result.</li>
+      <li><strong>Send the routing headers</strong>, mirroring body values exactly, with the Base64 sentinel encoding where needed.</li>
+      <li><strong>Mirror <code>x-mcp-header</code> annotations</strong> from tool schemas into HTTP headers on HTTP transports.</li>
+      <li><strong>Re-issue, don't resume</strong>, when a response stream breaks.</li>
+      <li><strong>Migrate registration to CIMD</strong> where supported; set <code>application_type</code> if you still fall back to DCR; key persisted credentials by issuer.</li>
+      <li><strong>Validate <code>iss</code></strong> before redeeming an authorization code.</li>
+    </ul>
+
+    <div class="card-grid cols-2">
+      <div class="card tools">
+        <div class="card-icon">✓</div>
+        <h4>Things you can stop doing</h4>
+        <p>Provisioning sticky sessions at the load balancer · running a shared session store just to survive a redeploy · holding an SSE stream open to receive elicitations · polling <code>tools/list</code> on every turn.</p>
+      </div>
+      <div class="card sampling">
+        <div class="card-icon">◷</div>
+        <h4>Things not to rush</h4>
+        <p>Roots, Sampling, Logging, DCR and the <code>includeContext</code> values <code>"thisServer"</code> / <code>"allServers"</code> are <strong>deprecated, not removed</strong>. Earliest removal is the first revision released on or after <strong>2027-07-28</strong>. Don't add new dependencies; do plan the migration; don't panic-rewrite working code this quarter.</p>
+      </div>
+    </div>
   </section>
 
 </main>
@@ -1371,24 +1731,35 @@
 <footer>
   <h3 style="color: var(--text); margin-bottom: 16px; font-size: 18px;">Further reading</h3>
   <div class="ref-grid">
-    <a href="https://modelcontextprotocol.io/specification/2025-11-25" target="_blank" rel="noopener">Official MCP Specification</a>
-    <a href="https://modelcontextprotocol.io/docs/learn/architecture" target="_blank" rel="noopener">Architecture overview</a>
-    <a href="https://blog.modelcontextprotocol.io/posts/2026-mcp-roadmap/" target="_blank" rel="noopener">The 2026 MCP Roadmap</a>
-    <a href="https://github.com/modelcontextprotocol/modelcontextprotocol" target="_blank" rel="noopener">Spec GitHub repository</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28" target="_blank" rel="noopener">Official MCP Specification (2026-07-28)</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/changelog" target="_blank" rel="noopener">Key Changes: 2025-11-25 &rarr; 2026-07-28</a>
+    <a href="https://blog.modelcontextprotocol.io/posts/2026-07-28/" target="_blank" rel="noopener">The 2026-07-28 Specification - MCP Blog</a>
+    <a href="https://blog.modelcontextprotocol.io/posts/mcp-roadmap/" target="_blank" rel="noopener">The New MCP Roadmap (Aug 2026)</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning" target="_blank" rel="noopener">Versioning and compatibility</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr" target="_blank" rel="noopener">Multi Round-Trip Requests</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions" target="_blank" rel="noopener">Subscriptions</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching" target="_blank" rel="noopener">Caching (ttlMs, cacheScope)</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http" target="_blank" rel="noopener">Streamable HTTP transport</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/server/discover" target="_blank" rel="noopener">server/discover</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/deprecated" target="_blank" rel="noopener">Deprecated features registry</a>
+    <a href="https://modelcontextprotocol.io/community/feature-lifecycle" target="_blank" rel="noopener">Feature lifecycle &amp; deprecation policy</a>
+    <a href="https://modelcontextprotocol.io/extensions/overview" target="_blank" rel="noopener">Extensions overview</a>
+    <a href="https://modelcontextprotocol.io/extensions/tasks/overview" target="_blank" rel="noopener">Tasks extension</a>
+    <a href="https://modelcontextprotocol.io/extensions/apps/overview" target="_blank" rel="noopener">MCP Apps</a>
+    <a href="https://modelcontextprotocol.io/extensions/skills/overview" target="_blank" rel="noopener">Skills over MCP</a>
+    <a href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration" target="_blank" rel="noopener">Client registration (CIMD / DCR)</a>
+    <a href="https://blog.modelcontextprotocol.io/posts/enterprise-managed-auth/" target="_blank" rel="noopener">Enterprise-Managed Authorization</a>
     <a href="https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices" target="_blank" rel="noopener">Security best practices</a>
-    <a href="https://modelcontextprotocol.io/docs/tutorials/security/authorization" target="_blank" rel="noopener">Authorization in MCP</a>
+    <a href="https://github.com/modelcontextprotocol/modelcontextprotocol" target="_blank" rel="noopener">Spec GitHub repository</a>
     <a href="https://workos.com/blog/mcp-vs-rest" target="_blank" rel="noopener">MCP vs REST - WorkOS</a>
-    <a href="https://workos.com/blog/mcp-features-guide" target="_blank" rel="noopener">Tools, Resources, Prompts, Sampling, Roots</a>
     <a href="https://jlowin.dev/blog/stop-converting-rest-apis-to-mcp" target="_blank" rel="noopener">Stop converting REST APIs to MCP</a>
     <a href="https://thenewstack.io/15-best-practices-for-building-mcp-servers-in-production/" target="_blank" rel="noopener">15 Best Practices - The New Stack</a>
     <a href="https://www.philschmid.de/mcp-best-practices" target="_blank" rel="noopener">MCP best practices - Phil Schmid</a>
     <a href="https://www.practical-devsecops.com/mcp-security-guide/" target="_blank" rel="noopener">Complete MCP Security Guide</a>
     <a href="https://unit42.paloaltonetworks.com/model-context-protocol-attack-vectors/" target="_blank" rel="noopener">Attack vectors - Palo Alto Unit 42</a>
-    <a href="https://aws.amazon.com/blogs/machine-learning/introducing-stateful-mcp-client-capabilities-on-amazon-bedrock-agentcore-runtime/" target="_blank" rel="noopener">Stateful MCP - AWS Bedrock AgentCore</a>
-    <a href="https://fast.io/resources/building-stateful-mcp-servers/" target="_blank" rel="noopener">Building stateful MCP servers</a>
     <a href="https://a16z.com/a-deep-dive-into-mcp-and-the-future-of-ai-tooling/" target="_blank" rel="noopener">Deep dive - a16z</a>
   </div>
-  <p style="margin-top: 30px;">A living reference · Built for the MCP curious · Re-check the spec for any quoted RFC</p>
+  <p style="margin-top: 30px;">A living reference · Current as of spec <code>2026-07-28</code> · Re-check the spec for any quoted RFC requirement</p>
 </footer>
 
 <script>
